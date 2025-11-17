@@ -46,7 +46,10 @@ class Plotter:
         return (1e-15, 'f')
     
     def calcular_escala_bonita(self, rango, num_divisiones):
-        if rango == 0: return 1
+        # Si el rango es 0 (línea plana) o inválido, devuelve 1 para evitar división por cero.
+        if rango == 0 or not np.isfinite(rango): 
+            return 1
+            
         division_aproximada = rango / num_divisiones
         magnitud = 10 ** np.floor(np.log10(division_aproximada))
         normalizado = division_aproximada / magnitud
@@ -59,23 +62,10 @@ class Plotter:
         return valor_bonito * magnitud
     
     def graficar_canales(self, ax, df, canales_con_indices, escalas_voltaje=None, 
-                        escalas_tiempo=None, offsets=None, colores_manuales=None, 
-                        cursor_info=None):
+                        escalas_tiempo=None, offsets_y=None, offsets_x=None, 
+                        colores_manuales=None, cursor_info=None):
         """
         Grafica los canales en estilo osciloscopio con cuadrícula sin valores
-        
-        Args:
-            ax: Eje de matplotlib
-            df: DataFrame con los datos
-            canales_con_indices: Dict {nombre_canal: índice}
-            escalas_voltaje: Dict {canal: V/div}
-            escalas_tiempo: Dict {canal: T/div}
-            offsets: Dict {canal: offset_en_divs}
-            colores_manuales: Dict {canal: color_hex}
-            cursor_info: Dict con info de cursores {'pos': {...}, 'canal_anclado': 'nombre_canal'}
-        
-        Returns:
-            dict: Información de escalas y artistas de cursores
         """
         ax.clear()
         
@@ -93,17 +83,17 @@ class Plotter:
                 line_y1 = ax.axhline(pos['y1'], color='magenta', linestyle='--', linewidth=1.5, alpha=0.8)
                 line_y2 = ax.axhline(pos['y2'], color='magenta', linestyle='--', linewidth=1.5, alpha=0.8)
                 
-                # Sin canal anclado, mostrar divisiones
-                text_x1 = ax.text(pos['x1'], self.divisiones_y/2 - 0.3, f"X1: {pos['x1']:.2f} div", 
+                # --- Posiciones X1/X2 Y1/Y2 diferentes ---
+                text_x1 = ax.text(pos['x1'], self.divisiones_y/2 - 0.5, f"X1: {pos['x1']:.2f} div", 
                        color='cyan', fontsize=9, fontweight='bold', ha='center',
                        bbox=dict(boxstyle='round,pad=0.3', facecolor='black', edgecolor='cyan', alpha=0.9))
-                text_x2 = ax.text(pos['x2'], self.divisiones_y/2 - 0.3, f"X2: {pos['x2']:.2f} div", 
+                text_x2 = ax.text(pos['x2'], self.divisiones_y/2 - 0.8, f"X2: {pos['x2']:.2f} div", 
                        color='cyan', fontsize=9, fontweight='bold', ha='center',
                        bbox=dict(boxstyle='round,pad=0.3', facecolor='black', edgecolor='cyan', alpha=0.9))
                 text_y1 = ax.text(0.3, pos['y1'], f"Y1: {pos['y1']:.2f} div", 
                        color='magenta', fontsize=9, fontweight='bold', va='center',
                        bbox=dict(boxstyle='round,pad=0.3', facecolor='black', edgecolor='magenta', alpha=0.9))
-                text_y2 = ax.text(0.3, pos['y2'], f"Y2: {pos['y2']:.2f} div", 
+                text_y2 = ax.text(0.6, pos['y2'], f"Y2: {pos['y2']:.2f} div", 
                        color='magenta', fontsize=9, fontweight='bold', va='center',
                        bbox=dict(boxstyle='round,pad=0.3', facecolor='black', edgecolor='magenta', alpha=0.9))
                 
@@ -111,159 +101,184 @@ class Plotter:
                     'x1': line_x1, 'x2': line_x2, 'y1': line_y1, 'y2': line_y2
                 }
                 info_escalas['cursor_texts'] = {
-                    'text_x1': text_x1, 'text_x2': text_x2, 'text_y1': text_y1, 'text_y2': text_y2
+                    'text_x1': text_x1, 'text_x2': text_x2, 
+                    'text_y1': text_y1, 'text_y2': text_y2
                 }
             return info_escalas
-            
-        tiempo_original = df[df.columns[0]]
-        t_min, t_max = tiempo_original.min(), tiempo_original.max()
-        rango_tiempo = t_max - t_min
-        t_centro = (t_min + t_max) / 2
-        tiempo_por_div_base = self.calcular_escala_bonita(rango_tiempo, self.divisiones_x)
         
-        for canal, i in canales_con_indices.items():
+
+        # --- MODIFICADO: Cálculo de tiempo a prueba de NaN ---
+        tiempo = df[df.columns[0]].values
+        t_min = np.nanmin(tiempo) # USAR NANMIN
+        t_max = np.nanmax(tiempo) # USAR NANMAX
+
+        if not np.isfinite(t_min) or not np.isfinite(t_max):
+             # Si el tiempo es inválido, no se puede graficar
+             t_min = 0
+             t_max = 1
+             t_rango = 1
+             t_centro_datos = 0.5
+        else:
+             t_rango = t_max - t_min
+             if t_rango == 0: # Evitar división por cero si solo hay 1 punto de tiempo
+                 t_rango = 1 
+             t_centro_datos = t_min + t_rango / 2
+        # --- FIN MODIFICACIÓN ---
+
+        # Preparar diccionarios
+        escalas_voltaje = {} if escalas_voltaje is None else escalas_voltaje
+        escalas_tiempo = {} if escalas_tiempo is None else escalas_tiempo
+        offsets_y = {} if offsets_y is None else offsets_y
+        offsets_x = {} if offsets_x is None else offsets_x
+        colores_manuales = {} if colores_manuales is None else colores_manuales
+
+        for i, (canal, indice_canal) in enumerate(canales_con_indices.items()):
+            datos = df[canal].values
             
-            if colores_manuales and canal in colores_manuales:
-                color = colores_manuales[canal]
+            # --- MODIFICADO: Cálculo de voltaje a prueba de NaN ---
+            v_min_datos = np.nanmin(datos)
+            v_max_datos = np.nanmax(datos)
+
+            # Comprobar si los datos son válidos
+            if not np.isfinite(v_min_datos) or not np.isfinite(v_max_datos):
+                # Todos los datos son NaN o Infinitos. Poner valores por defecto.
+                v_rango = 0
+                v_centro_datos = 0
             else:
-                color = self.colores[i % len(self.colores)]
+                v_rango = v_max_datos - v_min_datos
+                v_centro_datos = v_min_datos + v_rango / 2
+            # --- FIN MODIFICACIÓN ---
             
-            voltaje_original = df[canal]
-            
-            # --- ESCALA DE TIEMPO ---
-            if escalas_tiempo and canal in escalas_tiempo:
-                tiempo_por_div_canal = escalas_tiempo[canal]
+            # --- Auto-escala de Voltaje ---
+            if canal in escalas_voltaje:
+                v_div = escalas_voltaje[canal]
             else:
-                tiempo_por_div_canal = tiempo_por_div_base
-            tiempo_canal = (tiempo_original - t_centro) / tiempo_por_div_canal + (self.divisiones_x / 2)
-            factor_tiempo, simbolo_tiempo = self.determinar_prefijo(tiempo_por_div_canal)
+                v_div = self.calcular_escala_bonita(v_rango, self.divisiones_y - 2)
             
-            # --- ESCALA DE VOLTAJE ---
-            v_min, v_max = voltaje_original.min(), voltaje_original.max()
-            rango_voltaje = v_max - v_min
-            v_centro = (v_min + v_max) / 2
-            voltaje_por_div_base = self.calcular_escala_bonita(rango_voltaje, self.divisiones_y)
-            
-            if escalas_voltaje and canal in escalas_voltaje:
-                voltaje_por_div_canal = escalas_voltaje[canal]
+            # --- Auto-escala de Tiempo ---
+            if canal in escalas_tiempo:
+                t_div = escalas_tiempo[canal]
             else:
-                voltaje_por_div_canal = voltaje_por_div_base
+                t_div = self.calcular_escala_bonita(t_rango, self.divisiones_x)
             
-            voltaje_canal = (voltaje_original - v_centro) / voltaje_por_div_canal
-            factor_voltaje, simbolo_voltaje = self.determinar_prefijo(voltaje_por_div_canal)
+            # --- Offsets ---
+            offset_y_divs = offsets_y.get(canal, 0.0)
+            offset_x_divs = offsets_x.get(canal, 0.0)
             
-            # --- OFFSET ---
-            offset_divs = offsets.get(canal, 0.0) if offsets else 0.0
-            voltaje_canal_con_offset = voltaje_canal + offset_divs
+            # Convertir datos a coordenadas de cuadrícula (0-10, -4 a 4)
+            # Y = ( (Datos - Centro_Datos) / V_div ) + Offset_Y
+            y_transformado = ((datos - v_centro_datos) / v_div) + offset_y_divs
+            
+            # X = ( (Tiempo - Centro_Datos_T) / T_div ) + (Divs_X / 2) + Offset_X
+            x_transformado = ((tiempo - t_centro_datos) / t_div) + (self.divisiones_x / 2) + offset_x_divs
+            
+            # --- Determinar color ---
+            color = colores_manuales.get(canal, self.colores[indice_canal % len(self.colores)])
+            
+            ax.plot(x_transformado, y_transformado, color=color, 
+                    label=f"Canal {indice_canal + 1}", linewidth=1.5)
+            
+            # --- Guardar información de escala ---
+            v_factor, v_simbolo = self.determinar_prefijo(v_div)
+            t_factor, t_simbolo = self.determinar_prefijo(t_div)
             
             info_escalas['canales'][canal] = {
-                'indice_canal': i,
-                'tiempo_por_div': tiempo_por_div_canal,
-                'tiempo_factor': factor_tiempo,
-                'tiempo_simbolo': simbolo_tiempo,
-                't_centro': t_centro,
-                'voltaje_por_div': voltaje_por_div_canal,
-                'voltaje_factor': factor_voltaje,
-                'voltaje_simbolo': simbolo_voltaje,
-                'v_centro': v_centro,
-                'color': color,
-                'offset_divs': offset_divs
+                'voltaje_por_div': v_div,
+                'tiempo_por_div': t_div,
+                'v_centro': v_centro_datos,
+                't_centro': t_centro_datos,
+                'voltaje_factor': v_factor,
+                'voltaje_simbolo': v_simbolo,
+                'tiempo_factor': t_factor,
+                'tiempo_simbolo': t_simbolo,
+                'offset_y_divs': offset_y_divs,
+                'offset_x_divs': offset_x_divs,
+                'indice_canal': indice_canal,
+                'color': color
             }
-            
-            ax.plot(tiempo_canal, voltaje_canal_con_offset, 
-                   label=f"Canal {i+1}",
-                   color=color, linewidth=2, alpha=0.9)
-        
-        # Dibujar cursores con etiquetas según canal anclado
+
+        # --- Graficar Cursores ---
         if cursor_info:
             pos = cursor_info['pos']
-            canal_anclado = cursor_info.get('canal_anclado')
+            canal_anclado = cursor_info['canal_anclado']
             
-            # Líneas de cursores
+            # Dibujar líneas
             line_x1 = ax.axvline(pos['x1'], color='cyan', linestyle='--', linewidth=1.5, alpha=0.8)
             line_x2 = ax.axvline(pos['x2'], color='cyan', linestyle='--', linewidth=1.5, alpha=0.8)
             line_y1 = ax.axhline(pos['y1'], color='magenta', linestyle='--', linewidth=1.5, alpha=0.8)
             line_y2 = ax.axhline(pos['y2'], color='magenta', linestyle='--', linewidth=1.5, alpha=0.8)
             
-            # Calcular valores según canal anclado
+            info_escalas['cursor_artists'] = {
+                'x1': line_x1, 'x2': line_x2, 'y1': line_y1, 'y2': line_y2
+            }
+            info_escalas['cursor_texts'] = {}
+
             if canal_anclado and canal_anclado in info_escalas['canales']:
                 info_canal = info_escalas['canales'][canal_anclado]
                 
-                # Conversión X (tiempo) - SIN OFFSET, solo posición en cuadrícula × escala
+                # Conversión X (tiempo) - SIN offset X
                 t_div = info_canal['tiempo_por_div']
                 t_centro_canal = info_canal['t_centro']
                 t_factor = info_canal['tiempo_factor']
                 t_simbolo = info_canal['tiempo_simbolo']
-                
                 x1_real = ((pos['x1'] - (self.divisiones_x / 2)) * t_div) + t_centro_canal
                 x2_real = ((pos['x2'] - (self.divisiones_x / 2)) * t_div) + t_centro_canal
                 delta_x = abs(x2_real - x1_real)
-                
                 label_x1 = f"X1: {x1_real/t_factor:.3f}{t_simbolo}s"
                 label_x2 = f"X2: {x2_real/t_factor:.3f}{t_simbolo}s"
                 label_dx = f"ΔX: {delta_x/t_factor:.3f}{t_simbolo}s"
-                
-                # Conversión Y (voltaje) - SIN OFFSET, solo posición en cuadrícula × escala
+
+                # Conversión Y (voltaje) - SIN offset Y
                 v_div = info_canal['voltaje_por_div']
                 v_centro_canal = info_canal['v_centro']
                 v_factor = info_canal['voltaje_factor']
                 v_simbolo = info_canal['voltaje_simbolo']
-                # NO usar offset aquí - medir desde centro de cuadrícula (0)
-                
                 y1_real = (pos['y1'] * v_div) + v_centro_canal
                 y2_real = (pos['y2'] * v_div) + v_centro_canal
                 delta_y = abs(y2_real - y1_real)
-                
                 label_y1 = f"Y1: {y1_real/v_factor:.3f}{v_simbolo}V"
                 label_y2 = f"Y2: {y2_real/v_factor:.3f}{v_simbolo}V"
                 label_dy = f"ΔY: {delta_y/v_factor:.3f}{v_simbolo}V"
+            
             else:
-                # Sin canal válido, mostrar divisiones
-                label_x1 = f"X1: {pos['x1']:.2f}div"
-                label_x2 = f"X2: {pos['x2']:.2f}div"
-                label_dx = f"ΔX: {abs(pos['x2']-pos['x1']):.2f}div"
-                label_y1 = f"Y1: {pos['y1']:.2f}div"
-                label_y2 = f"Y2: {pos['y2']:.2f}div"
-                label_dy = f"ΔY: {abs(pos['y2']-pos['y1']):.2f}div"
-            
-            # Crear etiquetas de texto para X1, X2
-            text_x1 = ax.text(pos['x1'], self.divisiones_y/2 - 0.3, label_x1, 
+                # Caso fallback si el canal no es válido (ej: se acaba de apagar)
+                label_x1 = f"X1: {pos['x1']:.2f} div"
+                label_x2 = f"X2: {pos['x2']:.2f} div"
+                label_y1 = f"Y1: {pos['y1']:.2f} div"
+                label_y2 = f"Y2: {pos['y2']:.2f} div"
+                delta_x = abs(pos['x2'] - pos['x1'])
+                delta_y = abs(pos['y2'] - pos['y1'])
+                label_dx = f"ΔX: {delta_x:.2f} div"
+                label_dy = f"ΔY: {delta_y:.2f} div"
+
+            # --- Posiciones X1/X2 Y1/Y2 diferentes ---
+            text_x1 = ax.text(pos['x1'], self.divisiones_y/2 - 0.5, label_x1, 
                    color='cyan', fontsize=9, fontweight='bold', ha='center',
                    bbox=dict(boxstyle='round,pad=0.3', facecolor='black', edgecolor='cyan', alpha=0.9))
-            text_x2 = ax.text(pos['x2'], self.divisiones_y/2 - 0.3, label_x2, 
+            text_x2 = ax.text(pos['x2'], self.divisiones_y/2 - 0.8, label_x2, 
                    color='cyan', fontsize=9, fontweight='bold', ha='center',
                    bbox=dict(boxstyle='round,pad=0.3', facecolor='black', edgecolor='cyan', alpha=0.9))
-            
-            # Crear etiquetas de texto para Y1, Y2
             text_y1 = ax.text(0.3, pos['y1'], label_y1, 
                    color='magenta', fontsize=9, fontweight='bold', va='center',
                    bbox=dict(boxstyle='round,pad=0.3', facecolor='black', edgecolor='magenta', alpha=0.9))
-            text_y2 = ax.text(0.3, pos['y2'], label_y2, 
+            text_y2 = ax.text(0.6, pos['y2'], label_y2, 
                    color='magenta', fontsize=9, fontweight='bold', va='center',
                    bbox=dict(boxstyle='round,pad=0.3', facecolor='black', edgecolor='magenta', alpha=0.9))
+            # --- FIN MODIFICACIÓN ---
+
+            # Etiquetas Delta (fijas en la esquina)
+            text_dx = ax.text(self.divisiones_x - 0.3, self.divisiones_y/2 - 1.9, label_dx, 
+                   color='cyan', fontsize=9, fontweight='bold', ha='right',
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='black', edgecolor='cyan', alpha=0.9))
+            text_dy = ax.text(self.divisiones_x - 0.3, self.divisiones_y/2 - 2.5, label_dy, 
+                   color='magenta', fontsize=9, fontweight='bold', ha='right',
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='black', edgecolor='magenta', alpha=0.9))
             
-            # Crear etiquetas de DELTA en esquina superior derecha
-            text_dx = ax.text(self.divisiones_x - 0.3, self.divisiones_y/2 - 1.9, label_dx,
-                   color='cyan', fontsize=10, fontweight='bold', ha='right',
-                   bbox=dict(boxstyle='round,pad=0.4', facecolor='black', edgecolor='cyan', alpha=0.95, linewidth=2))
-            text_dy = ax.text(self.divisiones_x - 0.3, self.divisiones_y/2 - 2.5, label_dy,
-                   color='magenta', fontsize=10, fontweight='bold', ha='right',
-                   bbox=dict(boxstyle='round,pad=0.4', facecolor='black', edgecolor='magenta', alpha=0.95, linewidth=2))
-            
-            # Guardar artistas
-            info_escalas['cursor_artists'] = {
-                'x1': line_x1, 'x2': line_x2, 'y1': line_y1, 'y2': line_y2
-            }
             info_escalas['cursor_texts'] = {
                 'text_x1': text_x1, 'text_x2': text_x2, 
                 'text_y1': text_y1, 'text_y2': text_y2,
                 'text_dx': text_dx, 'text_dy': text_dy
             }
-        
-        if len(canales_con_indices) > 1:
-            ax.legend(loc='upper right', framealpha=0.7, 
-                     facecolor='black', edgecolor='gray', 
-                     labelcolor='white', fontsize=10)
         
         return info_escalas
     
@@ -293,13 +308,5 @@ class Plotter:
         ax.xaxis.set_minor_locator(MultipleLocator(0.2))
         ax.yaxis.set_minor_locator(MultipleLocator(0.2))
         
-        ax.set_title('Osciloscopio', fontsize=14, color='white')
-        
-        ax.set_xlabel('Tiempo', color='#FFD700', fontsize=10, ha='center')
-        ax.set_ylabel('Tensión', color='#FFFFFF', fontsize=10, va='center')
-        
-        for spine in ax.spines.values():
-            spine.set_edgecolor('#00FF00')
-            spine.set_linewidth(1.5)
-        
-        ax.tick_params(colors='#00FF00', which='both')
+        ax.set_title('Osciloscopio', fontsize=14, color='#00FF00', fontweight='bold')
+        ax.figure.tight_layout()

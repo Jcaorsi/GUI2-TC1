@@ -37,7 +37,8 @@ class OsciloscopioGUI:
         # Escalas manuales
         self.escalas_tiempo_manual = {}
         self.escalas_voltaje_manual = {}
-        self.offset_manual = {}
+        self.offset_y_manual = {}
+        self.offset_x_manual = {}  # NUEVO: offset horizontal
         self.colores_manuales = {}
         
         # Diccionarios para widgets Entry
@@ -49,6 +50,9 @@ class OsciloscopioGUI:
         self.fine_mode_voltaje = {}
         self.fine_mode_tiempo = {}
         self.fine_mode_offset = {}
+        
+        # NUEVO: Estado del eje de offset activo ('x' o 'y')
+        self.offset_eje_activo = {}  # {canal: 'y'} o {canal: 'x'}
         
         self.prefijos_parser = {
             'T': 1e12, 'G': 1e9, 'M': 1e6, 'k': 1e3,
@@ -246,8 +250,10 @@ class OsciloscopioGUI:
                 self.btn_graficar.config(state=tk.NORMAL)
                 self.escalas_voltaje_manual.clear()
                 self.escalas_tiempo_manual.clear()
-                self.offset_manual.clear()
+                self.offset_y_manual.clear()
+                self.offset_x_manual.clear()
                 self.colores_manuales.clear()
+                self.offset_eje_activo.clear()
                 self.actualizar_grafico()
                 messagebox.showinfo("Éxito", "Archivo cargado correctamente")
             except Exception as e:
@@ -439,48 +445,75 @@ class OsciloscopioGUI:
                      width=5).pack(side=tk.LEFT, padx=5)
 
             # --- SECCIÓN OFFSET (en right_frame) ---
-            tk.Label(right_frame, text="Posición (Offset)", bg='#1a1a1a', 
-                    fg='#AAAAFF', font=('Arial', 9, 'bold')).pack(pady=(5,2))
+            # Determinar qué eje está activo
+            eje_activo = self.offset_eje_activo.get(canal, 'y')
             
-            offset_actual = info.get('offset_divs', 0.0)
+            # Label clickeable para cambiar entre X e Y
+            if eje_activo == 'y':
+                label_text = "Offset Y"
+                label_fg = '#AAAAFF'
+            else:
+                label_text = "Offset X"
+                label_fg = '#FFAA55'
             
+            label_offset = tk.Label(right_frame, text=label_text, bg='#1a1a1a', 
+                    fg=label_fg, font=('Arial', 8, 'bold'), cursor='hand2')
+            label_offset.pack(pady=(3,1))
+            label_offset.bind('<Button-1>', lambda e, c=canal: self.toggle_offset_eje(c))
+
+            # Obtener offset actual según el eje activo
+            if eje_activo == 'y':
+                offset_actual = self.offset_y_manual.get(canal, 0.0)
+            else:
+                offset_actual = self.offset_x_manual.get(canal, 0.0)
+
             controles_offset_entry = tk.Frame(right_frame, bg='#1a1a1a')
-            controles_offset_entry.pack(pady=(2,2))
-            
+            controles_offset_entry.pack(pady=(1,1))
+
             o_var = tk.StringVar(value=f"{offset_actual:.2f}")
             o_entry = tk.Entry(controles_offset_entry, textvariable=o_var, width=5,
-                               bg='#333333', fg='#FFFFFF', insertbackground='white',
-                               font=('Courier', 10, 'bold'))
-            o_entry.pack(side=tk.LEFT, padx=2)
+                            bg='#333333', fg='#FFFFFF', insertbackground='white',
+                            font=('Courier', 9, 'bold'))
+            o_entry.pack(side=tk.LEFT, padx=1)
             o_entry.bind('<Return>', lambda event, c=canal: self.set_escala_offset(c, event))
             self.entry_widgets_offset[canal] = o_entry
-            
+
             controles_offset_ajuste = tk.Frame(right_frame, bg='#1a1a1a')
-            controles_offset_ajuste.pack(pady=(0, 5))
+            controles_offset_ajuste.pack(pady=(0, 2))
             tk.Button(controles_offset_ajuste, text="▲", 
-                     command=lambda c=canal: self.ajustar_offset(c, 1),
-                     bg='#222222', fg='#AAAAFF', font=('Arial', 10, 'bold'), 
-                     width=3).pack(side=tk.LEFT, padx=5)
+                    command=lambda c=canal: self.ajustar_offset(c, 1),
+                    bg='#222222', fg='#AAAAFF' if eje_activo == 'y' else '#FFAA55', 
+                    font=('Arial', 8, 'bold'), 
+                    width=2, height=1).pack(side=tk.LEFT, padx=1)
             tk.Button(controles_offset_ajuste, text="▼", 
-                     command=lambda c=canal: self.ajustar_offset(c, -1),
-                     bg='#222222', fg='#AAAAFF', font=('Arial', 10, 'bold'), 
-                     width=3).pack(side=tk.LEFT, padx=5)
-            
+                    command=lambda c=canal: self.ajustar_offset(c, -1),
+                    bg='#222222', fg='#AAAAFF' if eje_activo == 'y' else '#FFAA55', 
+                    font=('Arial', 8, 'bold'), 
+                    width=2, height=1).pack(side=tk.LEFT, padx=1)
+
             controles_offset_modo = tk.Frame(right_frame, bg='#1a1a1a')
-            controles_offset_modo.pack(pady=(0, 5))
+            controles_offset_modo.pack(pady=(0, 2))
             is_fine_o = self.fine_mode_offset.get(canal, False)
             fine_o_relief = tk.SUNKEN if is_fine_o else tk.RAISED
             fine_o_fg = '#FFFF00' if is_fine_o else '#FF00FF'
-            tk.Button(controles_offset_modo, text="FINE", 
-                     command=lambda c=canal: self.toggle_fine_offset(c),
-                     bg='#330033', fg=fine_o_fg, relief=fine_o_relief,
-                     font=('Arial', 8, 'bold'), 
-                     width=5).pack(side=tk.LEFT, padx=2)
-            tk.Button(controles_offset_modo, text="RESET", 
-                     command=lambda c=canal: self.reset_offset(c),
-                     bg='#330033', fg='#FF00FF', font=('Arial', 8, 'bold'), 
-                     width=5).pack(side=tk.LEFT, padx=2)
-
+            tk.Button(controles_offset_modo, text="F", 
+                    command=lambda c=canal: self.toggle_fine_offset(c),
+                    bg='#330033', fg=fine_o_fg, relief=fine_o_relief,
+                    font=('Arial', 7, 'bold'), 
+                    width=3, height=1).pack(side=tk.LEFT, padx=1)
+            tk.Button(controles_offset_modo, text="R", 
+                    command=lambda c=canal: self.reset_offset(c),
+                    bg='#330033', fg='#FF00FF', font=('Arial', 7, 'bold'), 
+                    width=3, height=1).pack(side=tk.LEFT, padx=1)
+    
+    def toggle_offset_eje(self, canal):
+        """Cambia entre offset X y offset Y"""
+        actual = self.offset_eje_activo.get(canal, 'y')
+        if actual == 'y':
+            self.offset_eje_activo[canal] = 'x'
+        else:
+            self.offset_eje_activo[canal] = 'y'
+        self.actualizar_panel_escalas()
     
     def parse_escala_valor(self, input_str):
         if not input_str: return None
@@ -638,7 +671,12 @@ class OsciloscopioGUI:
         valor_str = entry_widget.get()
         try:
             valor_float = float(valor_str)
-            self.offset_manual[canal] = valor_float
+            # Guardar en el diccionario correcto según el eje activo
+            eje_activo = self.offset_eje_activo.get(canal, 'y')
+            if eje_activo == 'y':
+                self.offset_y_manual[canal] = valor_float
+            else:
+                self.offset_x_manual[canal] = valor_float
             self.redibujar_con_escalas()
         except ValueError:
             messagebox.showerror("Valor Inválido", 
@@ -647,8 +685,11 @@ class OsciloscopioGUI:
             self.actualizar_panel_escalas()
 
     def reset_offset(self, canal):
-        if canal in self.offset_manual:
-            del self.offset_manual[canal]
+        # Resetear ambos offsets
+        if canal in self.offset_y_manual:
+            del self.offset_y_manual[canal]
+        if canal in self.offset_x_manual:
+            del self.offset_x_manual[canal]
         if canal in self.fine_mode_offset:
             del self.fine_mode_offset[canal]
         self.redibujar_con_escalas()
@@ -661,7 +702,15 @@ class OsciloscopioGUI:
     def ajustar_offset(self, canal, direccion):
         if self.info_escalas is None or not self.info_escalas.get('canales') or canal not in self.info_escalas['canales']:
             return
-        actual = self.offset_manual.get(canal, 0.0)
+        
+        # Determinar qué eje está activo
+        eje_activo = self.offset_eje_activo.get(canal, 'y')
+        
+        if eje_activo == 'y':
+            actual = self.offset_y_manual.get(canal, 0.0)
+        else:
+            actual = self.offset_x_manual.get(canal, 0.0)
+        
         is_fine = self.fine_mode_offset.get(canal, False)
         
         if is_fine:
@@ -671,11 +720,21 @@ class OsciloscopioGUI:
         
         nuevo_valor = actual + (step * direccion)
         
-        limite = self.plotter.divisiones_y * 2
+        # Límites según el eje
+        if eje_activo == 'y':
+            limite = self.plotter.divisiones_y * 2
+        else:
+            limite = self.plotter.divisiones_x * 2
+            
         if nuevo_valor > limite: nuevo_valor = limite
         if nuevo_valor < -limite: nuevo_valor = -limite
-                
-        self.offset_manual[canal] = nuevo_valor
+        
+        # Guardar en el diccionario correcto
+        if eje_activo == 'y':
+            self.offset_y_manual[canal] = nuevo_valor
+        else:
+            self.offset_x_manual[canal] = nuevo_valor
+            
         self.redibujar_con_escalas()
         
     
@@ -692,7 +751,6 @@ class OsciloscopioGUI:
             self.redibujar_con_escalas()
 
     
-    # ----- ESTA ES TU NUEVA FUNCIÓN 'redibujar_con_escalas' -----
     def redibujar_con_escalas(self):
         """
         Redibuja el gráfico aplicando las escalas manuales
@@ -719,15 +777,17 @@ class OsciloscopioGUI:
                  self.cursor_artists = info_cursores.get('cursor_artists', {})
                  # Guardar también las etiquetas de texto
                  if 'cursor_texts' in info_cursores:
-                     if 'canales' not in self.info_escalas:
-                         self.info_escalas = {} # Asegurarse que exista
+                     # Asegurarse que self.info_escalas exista
+                     if self.info_escalas is None:
+                         self.info_escalas = {}
                      self.info_escalas['cursor_texts'] = info_cursores.get('cursor_texts', {})
             else:
                  self.cursor_artists = {}
             self.canvas.draw()
-            self.info_escalas = None
+            self.info_escalas = None # Limpiar info si no hay canales
             self.actualizar_panel_escalas()
             self.actualizar_display_cursores()
+            self.actualizar_lista_canales_cursor_y_redibujar_si_es_necesario() # Llamada a la nueva lógica
             return
         
         self.ax.clear()
@@ -736,31 +796,67 @@ class OsciloscopioGUI:
             self.ax, self.df, canales_a_graficar, 
             self.escalas_voltaje_manual,
             self.escalas_tiempo_manual,
-            self.offset_manual,
+            self.offset_y_manual,
+            self.offset_x_manual,
             self.colores_manuales,
             cursor_info=cursor_info_dict
         )
         
         self.cursor_artists = self.info_escalas.get('cursor_artists', {})
         
-        # Actualizar lista de canales para el desplegable de cursores
-        self.mapa_nombres_canales_cursor.clear()
-        nombres_canales = []
-        if self.info_escalas.get('canales'):
-            for col_name, info in sorted(self.info_escalas['canales'].items(), key=lambda item: item[1]['indice_canal']):
-                nombre_ui = f"Canal {info['indice_canal'] + 1}"
-                nombres_canales.append(nombre_ui)
-                self.mapa_nombres_canales_cursor[nombre_ui] = col_name
-            
-        self.combo_canal_cursor['values'] = nombres_canales
-        self.combo_canal_cursor.config(state='readonly')
-        if self.canal_cursor_seleccionado.get() not in nombres_canales:
-             self.canal_cursor_seleccionado.set(nombres_canales[0] if nombres_canales else "")
-        
         self.actualizar_panel_escalas()
         self.actualizar_display_cursores()
         self.canvas.draw()
+        
+        # Llamar a la lógica de actualización del ComboBox de cursores
+        # Esta función ahora también maneja el redibujado si es necesario
+        self.actualizar_lista_canales_cursor_y_redibujar_si_es_necesario()
     
+    
+    def actualizar_lista_canales_cursor_y_redibujar_si_es_necesario(self):
+        """
+        Actualiza el ComboBox de cursores y redibuja si el canal anclado
+        se fuerza a cambiar (ej: al activar cursores por primera vez).
+        """
+        
+        # Guardar el nombre UI actual ANTES de recalcular la lista
+        nombre_ui_actual = self.canal_cursor_seleccionado.get()
+        
+        # Actualizar lista de canales para el desplegable de cursores
+        self.mapa_nombres_canales_cursor.clear()
+        nombres_canales_ui = []
+        if self.info_escalas and self.info_escalas.get('canales'):
+            canales_ordenados = sorted(self.info_escalas['canales'].items(), 
+                                      key=lambda item: item[1]['indice_canal'])
+            for col_name, info in canales_ordenados:
+                nombre_ui = f"Canal {info['indice_canal'] + 1}"
+                nombres_canales_ui.append(nombre_ui)
+                self.mapa_nombres_canales_cursor[nombre_ui] = col_name
+            
+        self.combo_canal_cursor['values'] = nombres_canales_ui
+        self.combo_canal_cursor.config(state='readonly')
+        
+        # Comprobar si el canal anclado actual sigue siendo válido
+        nombre_real_actual = self.mapa_nombres_canales_cursor.get(nombre_ui_actual)
+        needs_redraw_for_cursors = False
+
+        if (not nombre_real_actual) and nombres_canales_ui:
+            # El canal seleccionado (o "") no es válido, pero SÍ hay canales visibles.
+            # Forzar la selección al primer canal disponible.
+            self.canal_cursor_seleccionado.set(nombres_canales_ui[0])
+            # Marcar que necesitamos redibujar para que las etiquetas (ej: "div") se actualicen
+            needs_redraw_for_cursors = True
+        elif not nombres_canales_ui:
+            # No hay canales visibles, limpiar la selección
+            self.canal_cursor_seleccionado.set("")
+        
+        # Si forzamos una nueva selección de canal Y los cursores están activos,
+        # llamamos a redibujar OTRA VEZ.
+        # Esto reemplazará las etiquetas "div" con las etiquetas correctas.
+        if needs_redraw_for_cursors and self.cursores_activos.get():
+            # Esta llamada recursiva es segura (limitada a 1 nivel)
+            self.redibujar_con_escalas()
+
     
     def toggle_cursores(self):
         """Activa o desactiva la visualización de los cursores"""
@@ -773,7 +869,6 @@ class OsciloscopioGUI:
         """Se llama al cambiar el canal anclado"""
         # Al cambiar de canal, redibujar para que las etiquetas de texto se actualicen
         self.redibujar_con_escalas() 
-        # self.actualizar_display_cursores() # 'redibujar' ya llama a esto
         
     def _formatear_valor(self, valor, unidad):
         """Función helper para formatear números con prefijos (m, u, k, etc.)"""
@@ -784,10 +879,17 @@ class OsciloscopioGUI:
         factor, simbolo = self.plotter.determinar_prefijo(abs(valor))
         return f"{valor/factor:.2f}{simbolo}{unidad}"
 
+    
     def actualizar_display_cursores(self):
         """Actualiza las etiquetas de la barra de estado con los valores"""
         
-        if not self.cursores_activos.get() or not self.info_escalas or not self.info_escalas.get('canales'):
+        # Si la info de escalas no está lista, no hacer nada
+        if self.info_escalas is None:
+            self.label_cursor_x_info.config(text="X1: -- X2: -- ΔX: --")
+            self.label_cursor_y_info.config(text="Y1: -- Y2: -- ΔY: --")
+            return
+            
+        if not self.cursores_activos.get() or not self.info_escalas.get('canales'):
             self.label_cursor_x_info.config(text="X1: -- X2: -- ΔX: --")
             self.label_cursor_y_info.config(text="Y1: -- Y2: -- ΔY: --")
             return
@@ -806,7 +908,6 @@ class OsciloscopioGUI:
         t_centro = info['t_centro']
         v_div = info['voltaje_por_div']
         v_centro = info['v_centro']
-        offset = info['offset_divs']
         divs_x = self.plotter.divisiones_x
         
         x1p = self.cursor_pos['x1']
@@ -814,7 +915,7 @@ class OsciloscopioGUI:
         y1p = self.cursor_pos['y1']
         y2p = self.cursor_pos['y2']
 
-        # Conversión de Tiempo
+        # Conversión de Tiempo (SIN considerar offset X)
         t1_real = ((x1p - (divs_x / 2)) * t_div) + t_centro
         t2_real = ((x2p - (divs_x / 2)) * t_div) + t_centro
         dt = t2_real - t1_real
@@ -825,9 +926,9 @@ class OsciloscopioGUI:
         
         self.label_cursor_x_info.config(text=f"X1: {str_t1}  X2: {str_t2}  ΔX: {str_dt}")
 
-        # Conversión de Tensión
-        v1_abs = ((y1p - offset) * v_div) + v_centro
-        v2_abs = ((y2p - offset) * v_div) + v_centro
+        # Conversión de Tensión (SIN considerar offset Y)
+        v1_abs = (y1p * v_div) + v_centro
+        v2_abs = (y2p * v_div) + v_centro
         dv = v2_abs - v1_abs
         
         str_v1 = self._formatear_valor(v1_abs, 'V')
@@ -837,7 +938,6 @@ class OsciloscopioGUI:
         self.label_cursor_y_info.config(text=f"Y1: {str_v1}  Y2: {str_v2}  ΔY: {str_dv}")
     
     
-    # ----- ESTA ES TU NUEVA FUNCIÓN 'on_motion' -----
     def on_motion(self, event):
         
         if self.linea_arrastrada is None:
@@ -851,6 +951,10 @@ class OsciloscopioGUI:
         if x is None or y is None:
             return
         
+        # Si la info de escalas no está lista, no hacer nada
+        if self.info_escalas is None:
+            return
+            
         # Obtener nombre real del canal anclado
         nombre_ui = self.canal_cursor_seleccionado.get()
         nombre_real = self.mapa_nombres_canales_cursor.get(nombre_ui)
@@ -861,27 +965,34 @@ class OsciloscopioGUI:
             self.cursor_pos[key] = x
             
             # Actualizar etiqueta X1 o X2
-            if hasattr(self, 'info_escalas') and self.info_escalas and 'cursor_texts' in self.info_escalas:
+            if 'cursor_texts' in self.info_escalas:
                 text_key = f'text_{key}'
                 if text_key in self.info_escalas['cursor_texts']:
                     text_artist = self.info_escalas['cursor_texts'][text_key]
                     
                     # Calcular nuevo label
-                    if nombre_real and nombre_real in self.info_escalas['canales']:
+                    if nombre_real and self.info_escalas.get('canales') and nombre_real in self.info_escalas['canales']:
                         info_canal = self.info_escalas['canales'][nombre_real]
                         t_div = info_canal['tiempo_por_div']
                         t_centro = info_canal['t_centro']
                         t_factor = info_canal['tiempo_factor']
                         t_simbolo = info_canal['tiempo_simbolo']
+                        # CÁLCULO SIN OFFSET:
                         x_real = ((x - (self.plotter.divisiones_x / 2)) * t_div) + t_centro
                         nuevo_label = f"{key.upper()}: {x_real/t_factor:.3f}{t_simbolo}s"
                     else:
                         nuevo_label = f"{key.upper()}: {x:.3f}div"
                     
                     text_artist.set_text(nuevo_label)
-                    text_artist.set_position((x, self.plotter.divisiones_y/2 - 0.5))
-            
-            # --- LÓGICA DE DELTA MOVIDA AFUERA ---
+                    
+                    # --- MODIFICADO: Posiciones X1/X2 diferentes ---
+                    if key == 'x1':
+                        # Posición Y para la etiqueta X1 (ej: -0.5)
+                        text_artist.set_position((x, self.plotter.divisiones_y/2 - 0.5))
+                    elif key == 'x2':
+                        # Posición Y diferente para la etiqueta X2 (ej: -0.8, más abajo)
+                        text_artist.set_position((x, self.plotter.divisiones_y/2 - 0.8))
+                    # --- FIN MODIFICACIÓN ---
             
         elif key.startswith('y'):
             y = max(-self.plotter.divisiones_y/2, min(self.plotter.divisiones_y/2, y))
@@ -889,32 +1000,37 @@ class OsciloscopioGUI:
             self.cursor_pos[key] = y
             
             # Actualizar etiqueta Y1 o Y2
-            if hasattr(self, 'info_escalas') and self.info_escalas and 'cursor_texts' in self.info_escalas:
+            if 'cursor_texts' in self.info_escalas:
                 text_key = f'text_{key}'
                 if text_key in self.info_escalas['cursor_texts']:
                     text_artist = self.info_escalas['cursor_texts'][text_key]
                     
-                    # Calcular nuevo label SIN OFFSET
-                    if nombre_real and nombre_real in self.info_escalas['canales']:
+                    # Calcular nuevo label
+                    if nombre_real and self.info_escalas.get('canales') and nombre_real in self.info_escalas['canales']:
                         info_canal = self.info_escalas['canales'][nombre_real]
                         v_div = info_canal['voltaje_por_div']
                         v_centro = info_canal['v_centro']
                         v_factor = info_canal['voltaje_factor']
                         v_simbolo = info_canal['voltaje_simbolo']
-                        # SIN offset - medir posición absoluta en cuadrícula
+                        # CÁLCULO SIN OFFSET:
                         y_real = (y * v_div) + v_centro
                         nuevo_label = f"{key.upper()}: {y_real/v_factor:.3f}{v_simbolo}V"
                     else:
                         nuevo_label = f"{key.upper()}: {y:.3f}div"
                     
                     text_artist.set_text(nuevo_label)
-                    text_artist.set_position((0.3, y))
-            
-            # --- LÓGICA DE DELTA MOVIDA AFUERA ---
 
-        # ----- INICIO DEL BLOQUE MOVIDO -----
+                    # --- MODIFICADO: Posiciones Y1/Y2 diferentes ---
+                    if key == 'y1':
+                        # Posición X para la etiqueta Y1 (ej: 0.3)
+                        text_artist.set_position((0.3, y))
+                    elif key == 'y2':
+                        # Posición X diferente para la etiqueta Y2 (ej: 0.6, más a la derecha)
+                        text_artist.set_position((0.6, y))
+                    # --- FIN MODIFICACIÓN ---
+            
         # Actualizar ΔX y ΔY SIEMPRE, sin importar qué línea se movió.
-        if hasattr(self, 'info_escalas') and self.info_escalas and 'cursor_texts' in self.info_escalas:
+        if 'cursor_texts' in self.info_escalas:
             
             # Actualizar ΔX
             if 'text_dx' in self.info_escalas['cursor_texts']:
@@ -922,13 +1038,14 @@ class OsciloscopioGUI:
                 x1_pos = self.cursor_pos['x1']
                 x2_pos = self.cursor_pos['x2']
                 
-                if nombre_real and nombre_real in self.info_escalas['canales']:
+                if nombre_real and self.info_escalas.get('canales') and nombre_real in self.info_escalas['canales']:
                     info_canal = self.info_escalas['canales'][nombre_real]
                     t_div = info_canal['tiempo_por_div']
                     t_centro = info_canal['t_centro']
                     t_factor = info_canal['tiempo_factor']
                     t_simbolo = info_canal['tiempo_simbolo']
                     
+                    # CÁLCULO SIN OFFSET:
                     x1_real = ((x1_pos - (self.plotter.divisiones_x / 2)) * t_div) + t_centro
                     x2_real = ((x2_pos - (self.plotter.divisiones_x / 2)) * t_div) + t_centro
                     delta_x = abs(x2_real - x1_real)
@@ -945,13 +1062,14 @@ class OsciloscopioGUI:
                 y1_pos = self.cursor_pos['y1']
                 y2_pos = self.cursor_pos['y2']
                 
-                if nombre_real and nombre_real in self.info_escalas['canales']:
+                if nombre_real and self.info_escalas.get('canales') and nombre_real in self.info_escalas['canales']:
                     info_canal = self.info_escalas['canales'][nombre_real]
                     v_div = info_canal['voltaje_por_div']
                     v_centro = info_canal['v_centro']
                     v_factor = info_canal['voltaje_factor']
                     v_simbolo = info_canal['voltaje_simbolo']
                     
+                    # CÁLCULO SIN OFFSET:
                     y1_real = (y1_pos * v_div) + v_centro
                     y2_real = (y2_pos * v_div) + v_centro
                     delta_y = abs(y2_real - y1_real)
@@ -961,26 +1079,10 @@ class OsciloscopioGUI:
                     label_dy = f"ΔY: {delta_y:.3f}div"
                 
                 text_dy.set_text(label_dy)
-        # ----- FIN DEL BLOQUE MOVIDO -----
 
         self.canvas.draw_idle()
         self.actualizar_display_cursores()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
     def on_press(self, event):
         """Manejador para cuando se presiona el botón del mouse"""
         if not self.cursores_activos.get() or not self.cursor_artists:
@@ -1019,11 +1121,43 @@ class OsciloscopioGUI:
         Muestra información sobre la aplicación
         """
         messagebox.showinfo("Acerca de", 
-                          "Osciloscopio Digital - Visor CSV v2.7\n\n" # Versión
+                          "Osciloscopio Digital - Visor CSV v2.8\n\n"
                           "Visualizador de datos de osciloscopio\n"
                           "con interfaz estilo instrumento real\n\n"
                           "Características:\n"
                           "• Cuadrícula fija (10x8)\n"
-                          "• V/div, T/div y Posición Vertical\n"
+                          "• V/div, T/div y Posición Vertical/Horizontal\n"
                           "• Cursores X/Y arrastrables con etiquetas en vivo\n"
                           "• Cálculo de ΔX y ΔY en barra de estado")
+
+# Bloque principal para ejecutar la aplicación (si se desea)
+if __name__ == "__main__":
+    try:
+        # Importar los módulos necesarios que podrían faltar si se ejecuta solo
+        from data_handler import DataHandler
+        from plotter import Plotter
+    except ImportError:
+        print("Asegúrate de que data_handler.py y plotter.py están en el mismo directorio.")
+        # Definir clases dummy para permitir que el script al menos se inicie
+        # y muestre la GUI, aunque no funcionará sin los archivos reales.
+        if 'DataHandler' not in globals():
+            class DataHandler:
+                def cargar_csv(self, archivo):
+                    print(f"Dummy: Cargar {archivo}")
+                    return None # No se puede continuar sin datos reales
+        if 'Plotter' not in globals():
+            class Plotter:
+                def __init__(self):
+                    self.divisiones_x = 10
+                    self.divisiones_y = 8
+                def configurar_estilo_osciloscopio(self, ax):
+                    print("Dummy: Configurar estilo")
+                def graficar_canales(self, ax, df, canales, *args, **kwargs):
+                    print("Dummy: Graficar canales")
+                    return {}
+                def determinar_prefijo(self, valor):
+                    return (1, "")
+
+    root = tk.Tk()
+    app = OsciloscopioGUI(root)
+    root.mainloop()
