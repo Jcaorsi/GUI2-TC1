@@ -21,13 +21,32 @@ class OsciloscopioGUI:
     
     def __init__(self, root):
         """
-        Inicializa la ventana y todos sus componentes
+        Inicializa la ventana y todos sus componentes con diseño ADAPTABLE
         """
         self.root = root
         self.root.title("Osciloscopio Digital - Visor CSV")
-        self.root.geometry("1400x800")
+        
+        # 1. ELIMINADO: self.root.geometry("1400x800") -> Para que no sea fijo.
+        # Opcional: Establecer un tamaño mínimo para que no colapse demasiado
+        self.root.minsize(800, 600) 
         self.root.configure(bg='#1a1a1a')
         
+        # --- CONFIGURACIÓN DE GRID (REJILLA) ---
+        # Esto es lo que permite la adaptación automática
+        
+        # Fila 0 (Paneles y Gráfico): Peso 1 para que se expanda verticalmente
+        self.root.grid_rowconfigure(0, weight=1)
+        # Fila 1 (Barra Estado): Peso 0 para que mantenga su altura fija
+        self.root.grid_rowconfigure(1, weight=0)
+        
+        # Columna 0 (Panel Izq): Peso 0 (ancho automático según contenido)
+        self.root.grid_columnconfigure(0, weight=0)
+        # Columna 1 (Gráfico): Peso 1 (absorbe todo el espacio extra horizontal)
+        self.root.grid_columnconfigure(1, weight=1)
+        # Columna 2 (Panel Der): Peso 0 (ancho automático según contenido)
+        self.root.grid_columnconfigure(2, weight=0)
+        # ---------------------------------------
+
         self.data_handler = DataHandler()
         self.plotter = Plotter()
         
@@ -38,7 +57,7 @@ class OsciloscopioGUI:
         self.escalas_tiempo_manual = {}
         self.escalas_voltaje_manual = {}
         self.offset_y_manual = {}
-        self.offset_x_manual = {}  # NUEVO: offset horizontal
+        self.offset_x_manual = {}
         self.colores_manuales = {}
         
         # Diccionarios para widgets Entry
@@ -51,42 +70,37 @@ class OsciloscopioGUI:
         self.fine_mode_tiempo = {}
         self.fine_mode_offset = {}
         
-        # NUEVO: Estado del eje de offset activo ('x' o 'y')
-        self.offset_eje_activo = {}  # {canal: 'y'} o {canal: 'x'}
+        self.offset_eje_activo = {}
         
         self.prefijos_parser = {
             'T': 1e12, 'G': 1e9, 'M': 1e6, 'k': 1e3,
             'm': 1e-3, 'u': 1e-6, 'μ': 1e-6, 'n': 1e-9, 'p': 1e-12, 'f': 1e-15
         }
         
-        # Variables de estado para cursores
         self.cursores_activos = tk.BooleanVar(value=False)
         self.canal_cursor_seleccionado = tk.StringVar()
         self.mapa_nombres_canales_cursor = {}
-        
-        # Posiciones de cursores (en coordenadas de gráfico 0-10, -4 a 4)
         self.cursor_pos = {'x1': 3.0, 'x2': 7.0, 'y1': -1.0, 'y2': 1.0}
+        self.cursor_artists = {}
+        self.linea_arrastrada = None
         
-        # Variables para arrastre de cursores
-        self.cursor_artists = {}    # { 'x1': Line2D, ... }
-        self.linea_arrastrada = None  # (key, line_artist)
-        
-        
+        # Llamamos a los creadores (que ahora usarán grid)
         self.crear_menu()
-        self.crear_panel_control()
-        self.crear_area_grafico()
-        self.crear_panel_escalas()
-        self.crear_barra_estado()
-    
+        self.crear_panel_control()    # Columna 0
+        self.crear_area_grafico()     # Columna 1
+        self.crear_panel_escalas()    # Columna 2
+        self.crear_barra_estado()     # Fila 1 (toda la anchura)
     
     def crear_barra_estado(self):
         """
-        Crea una barra de estado en la parte inferior para mostrar coordenadas
+        Crea una barra de estado en la parte inferior
         """
         self.barra_estado = tk.Frame(self.root, bg='#000000', height=30, relief=tk.SUNKEN, bd=2)
-        self.barra_estado.pack(side=tk.BOTTOM, fill=tk.X, pady=(5,0))
         
-        # Frame para coordenadas del mouse (izquierda)
+        # CAMBIO: Usamos grid en la fila 1, ocupando las 3 columnas
+        self.barra_estado.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(5,0))
+        
+        # El contenido interno de la barra puede seguir usando pack, ya que es un frame aislado
         frame_coords = tk.Frame(self.barra_estado, bg='#000000')
         frame_coords.pack(side=tk.LEFT, padx=10, pady=2)
         
@@ -95,20 +109,17 @@ class OsciloscopioGUI:
                                          font=('Courier', 10, 'bold'), anchor=tk.W)
         self.label_coordenadas.pack()
         
-        # Frame para la información de los cursores (derecha)
         frame_cursores = tk.Frame(self.barra_estado, bg='#000000')
         frame_cursores.pack(side=tk.RIGHT, padx=10, pady=2)
         
-        # Etiqueta para Y1, Y2, DeltaY
         self.label_cursor_y_info = tk.Label(frame_cursores, text="Y1: -- Y2: -- ΔY: --", 
-                                         bg='#000000', fg='#FFFFFF', 
-                                         font=('Courier', 10, 'bold'), anchor=tk.W)
+                                           bg='#000000', fg='#FFFFFF', 
+                                           font=('Courier', 10, 'bold'), anchor=tk.W)
         self.label_cursor_y_info.pack()
 
-        # Etiqueta para X1, X2, DeltaX
         self.label_cursor_x_info = tk.Label(frame_cursores, text="X1: -- X2: -- ΔX: --", 
-                                         bg='#000000', fg='#FFD700', 
-                                         font=('Courier', 10, 'bold'), anchor=tk.W)
+                                           bg='#000000', fg='#FFD700', 
+                                           font=('Courier', 10, 'bold'), anchor=tk.W)
         self.label_cursor_x_info.pack()
     
     def crear_menu(self):
@@ -127,67 +138,54 @@ class OsciloscopioGUI:
         """
         Crea el panel lateral izquierdo con controles
         """
-        panel = tk.Frame(self.root, width=200, bg='#2a2a2a', relief=tk.RAISED, borderwidth=2)
-        panel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+        # CAMBIO: Eliminado width=200. El ancho lo definirán los botones internos.
+        panel = tk.Frame(self.root, bg='#2a2a2a', relief=tk.RAISED, borderwidth=2)
+        
+        # CAMBIO: Usamos grid en col 0. sticky="ns" hace que ocupe todo el alto disponible.
+        panel.grid(row=0, column=0, sticky="ns", padx=5, pady=5)
         
         tk.Label(panel, text="CONTROLES", font=('Arial', 12, 'bold'), 
-                bg='#2a2a2a', fg='#00FF00').pack(pady=10)
+                 bg='#2a2a2a', fg='#00FF00').pack(pady=10)
         
         btn_cargar = tk.Button(panel, text="📁 CARGAR CSV", command=self.abrir_archivo,
                                width=18, height=2, bg='#003300', fg='#00FF00', 
                                font=('Arial', 10, 'bold'), relief=tk.RAISED, bd=3)
         btn_cargar.pack(pady=10)
         
+        # El resto del código de este método sigue exactamente igual...
+        # (Copia el resto de tu código original de crear_panel_control aquí abajo)
         ttk.Separator(panel, orient='horizontal').pack(fill='x', pady=10)
-        
         tk.Label(panel, text="CANALES:", font=('Arial', 10, 'bold'), 
-                bg='#2a2a2a', fg='#00FF00').pack(pady=5)
-        
+                 bg='#2a2a2a', fg='#00FF00').pack(pady=5)
         self.frame_canales = tk.Frame(panel, bg='#2a2a2a')
         self.frame_canales.pack(pady=5, fill=tk.X)
-        
         self.canal_vars = []
-        
         ttk.Separator(panel, orient='horizontal').pack(fill='x', pady=10)
-
-        # --- SECCIÓN DE CURSORES ---
         tk.Label(panel, text="CURSORES:", font=('Arial', 10, 'bold'), 
-                bg='#2a2a2a', fg='#00FF00').pack(pady=5)
-        
+                 bg='#2a2a2a', fg='#00FF00').pack(pady=5)
         frame_cursores = tk.Frame(panel, bg='#2a2a2a')
         frame_cursores.pack(pady=5, padx=5, fill=tk.X)
-
         tk.Checkbutton(frame_cursores, text="Activar Cursores", 
-                       variable=self.cursores_activos, 
-                       command=self.toggle_cursores,
-                       bg='#2a2a2a', fg='#CCCCCC',
-                       selectcolor='#000000', activebackground='#2a2a2a',
-                       activeforeground='#00FF00', font=('Arial', 9, 'bold')
-                       ).pack(anchor=tk.W)
-
+                       variable=self.cursores_activos, command=self.toggle_cursores,
+                       bg='#2a2a2a', fg='#CCCCCC', selectcolor='#000000', 
+                       activebackground='#2a2a2a', activeforeground='#00FF00', 
+                       font=('Arial', 9, 'bold')).pack(anchor=tk.W)
         tk.Label(frame_cursores, text="Anclar a:", 
-                 bg='#2a2a2a', fg='#CCCCCC', font=('Arial', 9)
-                 ).pack(anchor=tk.W, pady=(5,0))
-
+                 bg='#2a2a2a', fg='#CCCCCC', font=('Arial', 9)).pack(anchor=tk.W, pady=(5,0))
         self.combo_canal_cursor = ttk.Combobox(frame_cursores, 
-                                               textvariable=self.canal_cursor_seleccionado, 
-                                               state='readonly', width=17)
+                                              textvariable=self.canal_cursor_seleccionado, 
+                                              state='readonly', width=17)
         self.combo_canal_cursor.pack(anchor=tk.W, pady=5)
         self.combo_canal_cursor.bind("<<ComboboxSelected>>", self.actualizar_cursores)
-        
         ttk.Separator(panel, orient='horizontal').pack(fill='x', pady=10)
-        # --- FIN SECCIÓN CURSORES ---
-        
         self.btn_graficar = tk.Button(panel, text="🔄 ACTUALIZAR", 
                                       command=self.actualizar_grafico,
                                       width=18, height=2, bg='#000033', fg='#00FFFF',
                                       font=('Arial', 10, 'bold'), relief=tk.RAISED, bd=3,
                                       state=tk.DISABLED)
         self.btn_graficar.pack(pady=15)
-        
         tk.Label(panel, text="INFO ARCHIVO:", font=('Arial', 9, 'bold'), 
-                bg='#2a2a2a', fg='#FFD700').pack(pady=(15,5))
-        
+                 bg='#2a2a2a', fg='#FFD700').pack(pady=(15,5))
         self.info_label = tk.Label(panel, text="Sin archivo cargado", 
                                    bg='#2a2a2a', fg='#CCCCCC', wraplength=180, 
                                    justify=tk.LEFT, font=('Courier', 8))
@@ -198,7 +196,10 @@ class OsciloscopioGUI:
         Crea el área central donde se mostrará el gráfico estilo osciloscopio
         """
         frame_grafico = tk.Frame(self.root, bg='#1a1a1a')
-        frame_grafico.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # CAMBIO: Grid en col 1. sticky="nsew" hace que se estire en TODAS direcciones.
+        # Al tener weight=1 en root, este es el panel que cambiará de tamaño.
+        frame_grafico.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
         
         self.fig = Figure(figsize=(10, 7), dpi=100, facecolor='#1a1a1a')
         self.ax = self.fig.add_subplot(111)
@@ -209,17 +210,23 @@ class OsciloscopioGUI:
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         
-       
-        # Conectar eventos de mouse para arrastrar cursores
+        # Eventos (sin cambios)
         self.canvas.mpl_connect('button_press_event', self.on_press)
         self.canvas.mpl_connect('motion_notify_event', self.on_motion)
         self.canvas.mpl_connect('button_release_event', self.on_release)
-    
+        
     def crear_panel_escalas(self):
-        panel = tk.Frame(self.root, width=220, bg='#2a2a2a', relief=tk.RAISED, borderwidth=2)
-        panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 5), pady=5) 
+        # CAMBIO: Eliminado width=220.
+        panel = tk.Frame(self.root, bg='#2a2a2a', relief=tk.RAISED, borderwidth=2)
+        
+        # CAMBIO: Grid en col 2. sticky="ns" para alto completo.
+        panel.grid(row=0, column=2, sticky="ns", padx=(10, 5), pady=5)
+        
         tk.Label(panel, text="CONTROLES CANAL", font=('Arial', 10, 'bold'), 
-                bg='#2a2a2a', fg='#00FF00').pack(pady=3)
+                 bg='#2a2a2a', fg='#00FF00').pack(pady=3)
+        
+        # El contenido interno (canvas y scrollbar) sigue usando pack RELATIVO al panel,
+        # así que no hace falta cambiarlo, funcionará perfecto.
         canvas_scroll = tk.Canvas(panel, bg='#2a2a2a', highlightthickness=0)
         scrollbar = tk.Scrollbar(panel, orient="vertical", command=canvas_scroll.yview)
         self.frame_escalas = tk.Frame(canvas_scroll, bg='#2a2a2a')
